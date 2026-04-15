@@ -1,41 +1,34 @@
-import React, { useEffect, useState } from 'react';
-import TopicsScreen from './screens/TopicsScreen.jsx';
-import GroupScreen from './screens/GroupScreen.jsx';
-import WallScreen from './screens/WallScreen.jsx';
-import AdminScreen from './screens/AdminScreen.jsx';
-
-function useRoute() {
-  const [path, setPath] = useState(window.location.pathname);
-  useEffect(() => {
-    const onPop = () => setPath(window.location.pathname);
-    window.addEventListener('popstate', onPop);
-    return () => window.removeEventListener('popstate', onPop);
-  }, []);
-  return path;
-}
+import React from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import Home from './routes/Home.jsx';
+import Join from './routes/Join.jsx';
+import Lobby from './routes/Lobby.jsx';
+import Answer from './routes/Answer.jsx';
+import Group from './routes/Group.jsx';
+import Projector from './routes/Projector.jsx';
+import Professor from './routes/Professor.jsx';
+import Topics from './routes/Topics.jsx';
+import Wall from './routes/Wall.jsx';
+import Admin from './routes/Admin.jsx';
 
 export default function App() {
-  const path = useRoute();
-  const [tab, setTab] = useState('topics');
-
-  if (path.startsWith('/admin')) return <AdminScreen />;
-
   return (
-    <div className="app">
-      {tab === 'topics' && <TopicsScreen />}
-      {tab === 'group' && <GroupScreen />}
-      {tab === 'wall' && <WallScreen />}
-      <nav className="tabs">
-        <button className={`tab ${tab === 'topics' ? 'active' : ''}`} onClick={() => setTab('topics')}>
-          <span className="tab-icon">●</span>Topics
-        </button>
-        <button className={`tab ${tab === 'group' ? 'active' : ''}`} onClick={() => setTab('group')}>
-          <span className="tab-icon">◆</span>My Group
-        </button>
-        <button className={`tab ${tab === 'wall' ? 'active' : ''}`} onClick={() => setTab('wall')}>
-          <span className="tab-icon">◼</span>Wall
-        </button>
-      </nav>
-    </div>
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<Home />} />
+        <Route path="/join" element={<Join />} />
+        <Route path="/join/:code" element={<Join />} />
+        <Route path="/lobby/:code" element={<Lobby />} />
+        <Route path="/answer/:code" element={<Answer />} />
+        <Route path="/group/:code" element={<Group />} />
+        <Route path="/group" element={<Group />} />
+        <Route path="/projector/:code" element={<Projector />} />
+        <Route path="/professor/:code" element={<Professor />} />
+        <Route path="/topics" element={<Topics />} />
+        <Route path="/wall" element={<Wall />} />
+        <Route path="/admin" element={<Admin />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
   );
 }
