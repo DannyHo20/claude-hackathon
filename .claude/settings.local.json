@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --prefix client install --no-audit --no-fund)",
+      "Bash(npm --prefix client run build)",
+      "Bash(npm install *)"
+    ]
+  }
+}
