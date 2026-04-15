@@ -8,6 +8,8 @@
     "dev:server": "node server/index.js",
     "dev:client": "npm --prefix client run dev",
     "seed": "node -e \"import('./server/db.js').then(m => { m.seed(); console.log('seeded'); process.exit(0); })\"",
+    "demo:seed": "DEMO_MODE=true node -e \"import('./server/db.js').then(m => { m.seedDemo(); process.exit(0); })\"",
+    "demo:reset": "rm -f mosaic.db mosaic.db-wal mosaic.db-shm && npm run demo:seed",
     "start": "node server/index.js"
   },
   "dependencies": {

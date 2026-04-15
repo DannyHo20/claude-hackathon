@@ -200,6 +200,76 @@ const SEED_ANSWERS_CAMPUS = [
   { name: 'Emma B', email: 'emma@test.com', text: "It depends entirely on whether you know the person." }
 ];
 
+const SEED_ANSWERS_TECH = [
+  // "Use it freely" voices
+  { name: 'Jordan M',  email: 'jordan@test.com',  text: "Yes, everything. The skill is knowing how to prompt well, not how to write a first draft. That's just a new literacy." },
+  { name: 'Chris L',   email: 'chris@test.com',   text: "Absolutely. AI is a tool like a calculator. Nobody argues calculators made us worse at math — they freed us for harder problems." },
+  { name: 'Lena K',    email: 'lena@test.com',    text: "I already use it for everything I can. My GPA went up. My stress went down. I'm not going back." },
+  { name: 'Derek V',   email: 'derek@test.com',   text: "If there are no restrictions, why wouldn't you? The assignment exists to prove you can do the work. AI helps you do the work." },
+  { name: 'Mia F',     email: 'mia@test.com',     text: "Every professional tool I'll use in my career involves AI. Using it now is just practicing for reality." },
+
+  // "It hollows out learning" voices
+  { name: 'Sam K',     email: 'sam@test.com',     text: "I tried it for a full semester. Got good grades and learned almost nothing. That scared me more than bad grades would have." },
+  { name: 'Sofia H',   email: 'sofia@test.com',   text: "Writing is how I figure out what I think. If AI writes for me, I stop being the one thinking. That's a real loss." },
+  { name: 'Marcus J',  email: 'marcus@test.com',  text: "There's something that happens in the struggle of figuring something out yourself. AI skips you past it. You arrive somewhere but don't know how." },
+  { name: 'Priya N',   email: 'priya@test.com',   text: "I would lose the ability to tell when I actually understand something versus when I think I do. That distinction matters." },
+  { name: 'Ethan R',   email: 'ethan@test.com',   text: "The discomfort of not knowing is part of learning. AI removes the discomfort and the learning along with it." },
+
+  // "Access / inequality" voices
+  { name: 'Alex T',    email: 'alex@test.com',    text: "Students with paid ChatGPT have a fundamentally different tool than students on the free tier. Nobody talks about this gap." },
+  { name: 'Maya R',    email: 'maya@test.com',    text: "AI tutoring is incredible if you can afford the good version. For everyone else it's a worse experience that still erodes the same skills." },
+  { name: 'Daniel W',  email: 'daniel@test.com',  text: "The question assumes we all have equal access. I don't have reliable wifi at home. 'Use AI for everything' isn't the same offer for everyone." },
+
+  // "Genuinely uncertain" voices
+  { name: 'Emma B',    email: 'emma@test.com',    text: "I use it but feel a kind of shame I can't explain. Which probably tells me something important that I've been avoiding." },
+  { name: 'Noah C',    email: 'noah@test.com',    text: "I honestly don't know what I'd lose. That uncertainty is the thing I'd want to sit with before answering yes." },
+];
+
+const DEMO_WALL_POSTS = [
+  {
+    topic_slug: 'campus-culture',
+    group_name: 'Principle vs. Survival',
+    central_tension: 'Whether reporting is an act of integrity or an act of privilege',
+    output_text: "Reporting is about principle but staying silent is about survival — we couldn't agree which one is more honest.",
+    agree_count: 15, pushback_count: 8
+  },
+  {
+    topic_slug: 'tech-and-ai',
+    group_name: 'Fluency vs. Dependency',
+    central_tension: 'Whether AI builds new skills or quietly removes the old ones',
+    output_text: "We all use AI but none of us had said it out loud to anyone before this conversation. That's the real finding.",
+    agree_count: 22, pushback_count: 3
+  },
+  {
+    topic_slug: 'money-and-class',
+    group_name: 'Visibility vs. Silence',
+    central_tension: 'Whether making financial inequality visible would help or hurt',
+    output_text: "Everyone in this group learned about financial aid from friends, not from the university. That's not an accident.",
+    agree_count: 18, pushback_count: 5
+  },
+  {
+    topic_slug: 'identity-and-belonging',
+    group_name: 'Inclusion vs. Performance',
+    central_tension: 'Whether you can feel included while still performing a version of yourself',
+    output_text: "Feeling included and performing inclusion turned out to be the same thing for most of us. That wasn't the conclusion we expected.",
+    agree_count: 14, pushback_count: 7
+  },
+  {
+    topic_slug: 'academic-life',
+    group_name: 'Understanding vs. Compliance',
+    central_tension: 'Whether grades measure learning or just successful performance of learning',
+    output_text: "Grades measure compliance more than understanding — and two of us realized we were fine with that, which troubled the other three.",
+    agree_count: 9, pushback_count: 11
+  },
+  {
+    topic_slug: 'campus-culture',
+    group_name: 'Rule-Keepers vs. System-Skeptics',
+    central_tension: 'Whether the rules are worth following when the system creating them is flawed',
+    output_text: "We agreed the system is flawed. We disagreed about whether that's a reason to follow the rules or a reason to break them.",
+    agree_count: 12, pushback_count: 9
+  },
+];
+
 export function seed() {
   const week = currentWeek();
 
@@ -245,6 +315,97 @@ export function seed() {
       }
     }
   }
+}
+
+function seedDemoWall() {
+  const week = currentWeek();
+  const insertGroup = db.prepare(
+    "INSERT INTO groups (question_id, topic_id, group_number, group_name, central_tension, agenda, status, started_at) VALUES (?, ?, ?, ?, ?, ?, 'complete', CURRENT_TIMESTAMP)"
+  );
+  const insertPost = db.prepare(
+    'INSERT INTO wall_posts (group_id, topic_id, group_name, output_text, agree_count, pushback_count) VALUES (?, ?, ?, ?, ?, ?)'
+  );
+
+  for (let i = 0; i < DEMO_WALL_POSTS.length; i++) {
+    const post = DEMO_WALL_POSTS[i];
+    const topic = db.prepare('SELECT * FROM topics WHERE slug = ?').get(post.topic_slug);
+    if (!topic) continue;
+    const q = db.prepare(
+      'SELECT id FROM questions WHERE topic_id = ? AND week = ? AND is_active = 1 ORDER BY id DESC LIMIT 1'
+    ).get(topic.id, week);
+    if (!q) continue;
+
+    const groupInfo = insertGroup.run(q.id, topic.id, i + 1, post.group_name, post.central_tension, '[]');
+    insertPost.run(groupInfo.lastInsertRowid, topic.id, post.group_name, post.output_text, post.agree_count, post.pushback_count);
+  }
+}
+
+export function seedDemo() {
+  const week = currentWeek();
+
+  // Wipe all generated data but keep topics/questions/answers structure
+  db.prepare('DELETE FROM wall_posts').run();
+  db.prepare('DELETE FROM messages').run();
+  db.prepare('DELETE FROM group_members').run();
+  db.prepare('DELETE FROM groups').run();
+  db.prepare('DELETE FROM answers').run();
+
+  // Ensure topics exist
+  const topicCount = db.prepare('SELECT COUNT(*) as n FROM topics').get().n;
+  if (topicCount === 0) {
+    const insertTopic = db.prepare(
+      'INSERT INTO topics (name, slug, description, color) VALUES (?, ?, ?, ?)'
+    );
+    for (const t of TOPICS) {
+      insertTopic.run(t.name, t.slug, t.description, t.color);
+    }
+  }
+
+  // Ensure questions exist
+  const insertQuestion = db.prepare(
+    'INSERT OR IGNORE INTO questions (topic_id, text, week, is_active) VALUES (?, ?, ?, 1)'
+  );
+  for (const t of TOPICS) {
+    const topic = db.prepare('SELECT id FROM topics WHERE slug = ?').get(t.slug);
+    if (!topic) continue;
+    const existing = db.prepare('SELECT id FROM questions WHERE topic_id = ? AND week = ?').get(topic.id, week);
+    if (!existing) insertQuestion.run(topic.id, WEEK1_QUESTIONS[t.slug], week);
+  }
+
+  const insertAns = db.prepare(
+    'INSERT OR IGNORE INTO answers (question_id, topic_id, student_name, student_email, answer_text) VALUES (?, ?, ?, ?, ?)'
+  );
+
+  // Seed 15 tech-and-ai answers
+  const techTopic = db.prepare('SELECT * FROM topics WHERE slug = ?').get('tech-and-ai');
+  if (techTopic) {
+    const q = db.prepare(
+      'SELECT id FROM questions WHERE topic_id = ? AND week = ? AND is_active = 1 ORDER BY id DESC LIMIT 1'
+    ).get(techTopic.id, week);
+    if (q) {
+      for (const a of SEED_ANSWERS_TECH) {
+        insertAns.run(q.id, techTopic.id, a.name, a.email, a.text);
+      }
+    }
+  }
+
+  // Seed 10 campus-culture answers
+  const campusTopic = db.prepare('SELECT * FROM topics WHERE slug = ?').get('campus-culture');
+  if (campusTopic) {
+    const q = db.prepare(
+      'SELECT id FROM questions WHERE topic_id = ? AND week = ? AND is_active = 1 ORDER BY id DESC LIMIT 1'
+    ).get(campusTopic.id, week);
+    if (q) {
+      for (const a of SEED_ANSWERS_CAMPUS) {
+        insertAns.run(q.id, campusTopic.id, a.name, a.email, a.text);
+      }
+    }
+  }
+
+  // Seed pre-built wall posts with dummy completed groups
+  seedDemoWall();
+
+  console.log('[mosaic] demo seeded — 15 tech-and-ai answers, 10 campus-culture answers, 6 wall posts');
 }
 
 seed();

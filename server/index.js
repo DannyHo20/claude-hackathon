@@ -912,6 +912,211 @@ app.post('/api/admin/advance-step', (req, res) => {
   res.json(result);
 });
 
+// ---------- Demo endpoints (DEMO_MODE only) ----------
+
+const DEMO_INJECT_MESSAGES = [
+  { name: 'Jordan M',  email: 'jordan@test.com',  text: "My honest answer is yes — I'd use it for everything. The question is what 'everything' actually means in practice." },
+  { name: 'Sam K',     email: 'sam@test.com',     text: "I tried that for a full semester. Got good grades and learned almost nothing. That scared me more than bad grades would have." },
+  { name: 'Alex T',    email: 'alex@test.com',    text: "You're both describing the same tool differently. But the tool you get depends on whether you can afford the paid version. That changes this whole conversation." },
+];
+
+function demoGuard(req, res) {
+  if (!DEMO_MODE) { res.status(404).json({ error: 'not found' }); return true; }
+  return false;
+}
+
+app.get('/api/demo/status', (req, res) => {
+  if (demoGuard(req, res)) return;
+  const groups = db.prepare(
+    "SELECT g.*, t.name as topic_name FROM groups g JOIN topics t ON t.id = g.topic_id WHERE g.room_id IS NULL ORDER BY g.created_at DESC"
+  ).all();
+  const memberStmt = db.prepare('SELECT student_name, role_tag FROM group_members WHERE group_id = ?');
+  const msgStmt = db.prepare("SELECT MAX(agenda_step) as max_step FROM messages WHERE group_id = ? AND message_type = 'prompt'");
+  const wallCount = db.prepare('SELECT COUNT(*) as n FROM wall_posts').get().n;
+
+  const result = groups.map(g => ({
+    id: g.id,
+    group_name: g.group_name,
+    central_tension: g.central_tension,
+    status: g.status,
+    topic_name: g.topic_name,
+    members: memberStmt.all(g.id),
+    current_step: msgStmt.get(g.id)?.max_step || 0,
+  }));
+
+  res.json({ demo_mode: true, groups: result, wall_post_count: wallCount });
+});
+
+app.post('/api/demo/run-full', async (req, res) => {
+  if (demoGuard(req, res)) return;
+  const week = currentWeek();
+  const topic = db.prepare("SELECT * FROM topics WHERE slug = 'tech-and-ai'").get();
+  if (!topic) return res.status(404).json({ error: 'tech-and-ai topic not found' });
+
+  const q = db.prepare(
+    'SELECT * FROM questions WHERE topic_id = ? AND week = ? AND is_active = 1 ORDER BY id DESC LIMIT 1'
+  ).get(topic.id, week);
+  if (!q) return res.status(404).json({ error: 'no active question for tech-and-ai' });
+
+  const answers = db.prepare(
+    'SELECT * FROM answers WHERE question_id = ? AND room_id IS NULL ORDER BY id'
+  ).all(q.id);
+  if (answers.length < 5) return res.status(400).json({ error: `need at least 5 answers, have ${answers.length}` });
+
+  // Only count groups that have members — dummy wall-post groups (no members) don't block regrouping
+  const existing = db.prepare(`
+    SELECT COUNT(*) as n FROM groups g WHERE g.question_id = ? AND g.room_id IS NULL
+    AND EXISTS (SELECT 1 FROM group_members gm WHERE gm.group_id = g.id)
+  `).get(q.id).n;
+  if (existing > 0) return res.status(409).json({ error: 'groups already exist — reset first' });
+
+  try {
+    const groupsFromClaude = await groupAnswers({ topicName: topic.name, questionText: q.text, answers });
+    const answerById = Object.fromEntries(answers.map(a => [a.id, a]));
+
+    const validGroups = groupsFromClaude.filter(g =>
+      (g.members || []).filter(m => answerById[m.answer_id]).length >= 4
+    );
+
+    const agendas = await Promise.all(validGroups.map(g => {
+      const members = (g.members || []).map(m => ({ ...m, answer: answerById[m.answer_id] })).filter(m => m.answer);
+      return generateAgenda({
+        topicName: topic.name, questionText: q.text,
+        members: members.map(m => ({ role_tag: m.role_tag, answer_text: m.answer.answer_text })),
+        mode: 'online'
+      });
+    }));
+
+    const insertGroup = db.prepare(
+      "INSERT INTO groups (question_id, topic_id, group_number, group_name, claude_reasoning, central_tension, agenda, status, started_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', CURRENT_TIMESTAMP)"
+    );
+    const insertMember = db.prepare(
+      'INSERT INTO group_members (group_id, answer_id, student_name, student_email, role_tag) VALUES (?, ?, ?, ?, ?)'
+    );
+    const insertMsg = db.prepare(
+      "INSERT INTO messages (group_id, student_email, student_name, content, message_type, agenda_step) VALUES (?, NULL, NULL, ?, 'prompt', ?)"
+    );
+
+    const group_ids = [];
+    for (let i = 0; i < validGroups.length; i++) {
+      const g = validGroups[i];
+      const members = (g.members || []).map(m => ({ ...m, answer: answerById[m.answer_id] })).filter(m => m.answer);
+      const info = insertGroup.run(
+        q.id, topic.id, g.group_number || (i + 1),
+        g.group_name || `Group ${i + 1}`,
+        g.reasoning || '', g.central_tension || '',
+        JSON.stringify(agendas[i])
+      );
+      const groupId = info.lastInsertRowid;
+      group_ids.push(groupId);
+      for (const m of members) {
+        insertMember.run(groupId, m.answer.id, m.answer.student_name, m.answer.student_email, m.role_tag || '');
+      }
+      // Post Step 1 prompt immediately
+      const agenda = agendas[i];
+      if (agenda[0]) {
+        const msgInfo = insertMsg.run(groupId, agenda[0].prompt, agenda[0].step);
+        const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(msgInfo.lastInsertRowid);
+        io.to(`group:${groupId}`).emit('group:message', { message });
+      }
+    }
+
+    res.json({ groups_created: validGroups.length, group_ids });
+  } catch (e) {
+    console.error('[demo run-full] failed:', e);
+    res.status(500).json({ error: 'grouping failed: ' + e.message });
+  }
+});
+
+app.post('/api/demo/inject-messages', (req, res) => {
+  if (demoGuard(req, res)) return;
+  const { group_id } = req.body || {};
+  if (!group_id) return res.status(400).json({ error: 'group_id required' });
+
+  const group = db.prepare('SELECT * FROM groups WHERE id = ?').get(group_id);
+  if (!group) return res.status(404).json({ error: 'group not found' });
+
+  // Check which seeded students are actually members of this group
+  const members = db.prepare('SELECT student_email FROM group_members WHERE group_id = ?').all(group_id);
+  const memberEmails = new Set(members.map(m => m.student_email));
+
+  const insertMsg = db.prepare(
+    "INSERT INTO messages (group_id, student_email, student_name, content, message_type, agenda_step) VALUES (?, ?, ?, ?, 'student', 1)"
+  );
+
+  const injected = [];
+  for (const msg of DEMO_INJECT_MESSAGES) {
+    // Use the message if the student is in this group, or inject all 3 regardless for demo variety
+    const info = insertMsg.run(group_id, msg.email, msg.name, msg.text);
+    const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid);
+    io.to(`group:${group_id}`).emit('group:message', { message });
+    injected.push(message);
+  }
+
+  res.json({ injected: injected.length, messages: injected });
+});
+
+app.post('/api/demo/advance-all', (req, res) => {
+  if (demoGuard(req, res)) return;
+  const active = db.prepare("SELECT id FROM groups WHERE status = 'active' AND room_id IS NULL").all();
+  const results = [];
+  for (const g of active) {
+    const result = forceAdvanceStep(g.id);
+    if (result.message) {
+      emitGroupMessage(io, g.id, result.message);
+    }
+    results.push({ group_id: g.id, ...result });
+  }
+  res.json({ advanced: results.length, results });
+});
+
+app.post('/api/demo/complete-all', (req, res) => {
+  if (demoGuard(req, res)) return;
+  const CLOSING = "Your conversation is complete. You've heard each other out — now write your group's one-sentence contribution to the campus wall. Make it specific, honest, and something that actually emerged from this discussion.";
+  const active = db.prepare("SELECT * FROM groups WHERE status = 'active' AND room_id IS NULL").all();
+  let completed = 0;
+  for (const g of active) {
+    const agenda = JSON.parse(g.agenda || '[]');
+    const lastStep = agenda[agenda.length - 1];
+    // Force-post remaining unposted steps then closing
+    const result = forceAdvanceStep(g.id);
+    if (result.message) emitGroupMessage(io, g.id, result.message);
+
+    const closingPosted = db.prepare(
+      "SELECT id FROM messages WHERE group_id = ? AND message_type = 'system'"
+    ).get(g.id);
+    if (!closingPosted) {
+      const info = db.prepare(
+        "INSERT INTO messages (group_id, student_email, student_name, content, message_type, agenda_step) VALUES (?, NULL, NULL, ?, 'system', ?)"
+      ).run(g.id, CLOSING, lastStep?.step ?? 4);
+      db.prepare("UPDATE groups SET status = 'complete' WHERE id = ?").run(g.id);
+      const message = db.prepare('SELECT * FROM messages WHERE id = ?').get(info.lastInsertRowid);
+      io.to(`group:${g.id}`).emit('group:message', { message });
+    } else {
+      db.prepare("UPDATE groups SET status = 'complete' WHERE id = ?").run(g.id);
+    }
+    completed++;
+  }
+  res.json({ completed });
+});
+
+app.delete('/api/demo/reset', (req, res) => {
+  if (demoGuard(req, res)) return;
+  // Only delete real groups (have members) — dummy wall-post groups (no members) are preserved
+  const realGroupIds = db.prepare(
+    'SELECT DISTINCT group_id as id FROM group_members WHERE group_id IN (SELECT id FROM groups WHERE room_id IS NULL)'
+  ).all().map(r => r.id);
+
+  if (realGroupIds.length > 0) {
+    const ph = realGroupIds.map(() => '?').join(',');
+    db.prepare(`DELETE FROM wall_posts WHERE group_id IN (${ph})`).run(...realGroupIds);
+    db.prepare(`DELETE FROM messages WHERE group_id IN (${ph})`).run(...realGroupIds);
+    db.prepare(`DELETE FROM group_members WHERE group_id IN (${ph})`).run(...realGroupIds);
+    db.prepare(`DELETE FROM groups WHERE id IN (${ph})`).run(...realGroupIds);
+  }
+  res.json({ reset: true });
+});
+
 // ---------- Boot ----------
 
 startStepAdvancer(io);

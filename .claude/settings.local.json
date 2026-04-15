@@ -3,7 +3,13 @@
     "allow": [
       "Bash(npm --prefix client install --no-audit --no-fund)",
       "Bash(npm --prefix client run build)",
-      "Bash(npm install *)"
+      "Bash(npm install *)",
+      "Bash(timeout 5 node server/index.js)",
+      "Bash(node server/index.js)",
+      "Bash(curl -s http://localhost:3001/api/topics)",
+      "Bash(npx vite *)",
+      "Bash(node *)",
+      "Bash(npm run *)"
     ]
   }
 }

@@ -10,6 +10,7 @@ import Professor from './routes/Professor.jsx';
 import Topics from './routes/Topics.jsx';
 import Wall from './routes/Wall.jsx';
 import Admin from './routes/Admin.jsx';
+import Demo from './routes/Demo.jsx';
 
 export default function App() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
         <Route path="/topics" element={<Topics />} />
         <Route path="/wall" element={<Wall />} />
         <Route path="/admin" element={<Admin />} />
+        <Route path="/demo" element={<Demo />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
